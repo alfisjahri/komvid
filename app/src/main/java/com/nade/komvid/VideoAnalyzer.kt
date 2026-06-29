@@ -5,6 +5,8 @@ import android.media.MediaCodecList
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class VideoMetadata(
     val width: Int,
@@ -23,7 +25,8 @@ data class CompressionEstimate(
 
 class VideoAnalyzer(private val context: Context) {
 
-    fun extractVideoMetadata(videoUri: Uri): VideoMetadata? {
+    // Ditambah suspend & Dispatchers.IO biar UI nggak freeze/delay
+    suspend fun extractVideoMetadata(videoUri: Uri): VideoMetadata? = withContext(Dispatchers.IO) {
         val retriever = MediaMetadataRetriever()
         var sizeBytes: Long = 0
 
@@ -32,18 +35,24 @@ class VideoAnalyzer(private val context: Context) {
             if (cursor.moveToFirst()) { sizeBytes = cursor.getLong(sizeIndex) }
         }
 
-        return try {
+        return@withContext try {
             retriever.setDataSource(context, videoUri)
-            val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 0
-            val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
-            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0
+            val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 0
+            val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
+            val r = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toInt() ?: 0
 
+            // FIX PORTRAIT: Jika HP nge-rotate video, kita tukar panjang x lebarnya
+            val trueWidth = if (r == 90 || r == 270) h else w
+            val trueHeight = if (r == 90 || r == 270) w else h
+
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0
             var bitrate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLong() ?: 0
+
             if (bitrate <= 0 && durationMs > 0) {
                 bitrate = (sizeBytes * 8) / (durationMs / 1000)
             }
 
-            VideoMetadata(width, height, durationMs / 1000, bitrate, sizeBytes)
+            VideoMetadata(trueWidth, trueHeight, durationMs / 1000, bitrate, sizeBytes)
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -72,19 +81,15 @@ class VideoAnalyzer(private val context: Context) {
         return "video/avc"
     }
 
-    // Parameter isHardwareMode dihapus, diganti targetShortSide (misal: 720, 1080)
     fun calculateEstimation(metadata: VideoMetadata, targetShortSide: Int): CompressionEstimate {
         val codec = checkHardwareCodecSupport()
-
-        // Bitrate dinamis ngikutin resolusi yang dipilih user
         val targetVideoBitrateMbps = when {
-            targetShortSide >= 2160 -> 12.0 // 4K
-            targetShortSide >= 1440 -> 6.0  // 2K
-            targetShortSide >= 1080 -> 3.5  // FHD
-            else -> 1.5                     // 720p HD
+            targetShortSide >= 2160 -> 12.0
+            targetShortSide >= 1440 -> 6.0
+            targetShortSide >= 1080 -> 3.5
+            else -> 1.5
         }
-
-        val targetAudioBitrateMbps = 0.096 // AAC 96 Kbps
+        val targetAudioBitrateMbps = 0.096
         val totalBitrateMbps = targetVideoBitrateMbps + targetAudioBitrateMbps
         val estimatedSizeMb = (totalBitrateMbps * metadata.durationSec) / 8
         val estimatedSizeBytes = (estimatedSizeMb * 1024 * 1024).toLong()

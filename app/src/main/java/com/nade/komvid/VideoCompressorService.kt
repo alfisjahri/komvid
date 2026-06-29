@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 
@@ -25,8 +26,6 @@ class VideoCompressorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val videoUriStr = intent?.getStringExtra("VIDEO_URI") ?: return START_NOT_STICKY
-
-        // Tangkap resolusi (sisi terpendek) pilihan user (Default ke 720p kalau gagal tangkap)
         val targetShortSide = intent.getIntExtra("TARGET_RES", 720)
 
         val notification = buildNotification(0, "Mempersiapkan mesin kompresi...")
@@ -36,10 +35,15 @@ class VideoCompressorService : Service() {
             startForeground(NOTIF_ID, notification)
         }
 
+        // KUNCI ANTI GAGAL: Memaksa CPU melek selama proses kompresi di Background
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Komvid::CompressWakelock")
+        wakeLock.acquire(30 * 60 * 1000L) // Maksimal melek 30 menit
+
         serviceScope.launch {
             try {
+                CompressorState.reset()
                 CompressorState.isCompressing.value = true
-                CompressorState.progress.value = 0
                 CompressorState.eta.value = "Memulai..."
 
                 val uri = Uri.parse(videoUriStr)
@@ -52,22 +56,33 @@ class VideoCompressorService : Service() {
                     val mimeType = analyzer.checkHardwareCodecSupport()
                     val targetBitrateBps = (estimate.targetBitrateMbps * 1024 * 1024).toInt()
 
-                    // KALKULASI PINTAR: Menyesuaikan Portrait/Landscape
-                    val originalShortSide = minOf(metadata.width, metadata.height)
-                    val scale = targetShortSide.toFloat() / originalShortSide.toFloat()
-
-                    // Tinggi absolut yang harus kita berikan ke Media3
-                    var targetHeightAbs = (metadata.height * scale).toInt()
-                    // Pastikan angka resolusi genap biar Hardware Encoder tidak crash!
+                    val isPortrait = metadata.height > metadata.width
+                    var targetHeightAbs = if (isPortrait) {
+                        (metadata.height * (targetShortSide.toFloat() / metadata.width)).toInt()
+                    } else {
+                        targetShortSide
+                    }
                     if (targetHeightAbs % 2 != 0) targetHeightAbs += 1
 
-                    val isSuccess = transcoder.startTranscode(uri, mimeType, targetBitrateBps, targetHeightAbs) { progress, etaString ->
+                    val startTimeMs = System.currentTimeMillis()
+
+                    val (savedUri, finalSizeBytes) = transcoder.startTranscode(uri, mimeType, targetBitrateBps, targetHeightAbs) { progress, etaString ->
                         updateNotification(progress, "Kompresi $progress% | $etaString")
                         CompressorState.progress.value = progress
                         CompressorState.eta.value = etaString
                     }
 
-                    if (isSuccess) {
+                    if (savedUri != null) {
+                        val timeTakenMs = System.currentTimeMillis() - startTimeMs
+                        val mins = (timeTakenMs / 1000) / 60
+                        val secs = (timeTakenMs / 1000) % 60
+
+                        CompressorState.timeTaken.value = String.format("%02d menit %02d detik", mins, secs)
+                        CompressorState.originalSizeMb.value = metadata.sizeBytes.toDouble() / (1024 * 1024)
+                        CompressorState.finalSizeMb.value = finalSizeBytes.toDouble() / (1024 * 1024)
+                        CompressorState.savedVideoUri.value = savedUri
+
+                        CompressorState.isFinished.value = true
                         updateNotification(100, "Selesai! Video tersimpan di Galeri.")
                     } else {
                         updateNotification(0, "Gagal mengompresi struktur video.")
@@ -77,6 +92,10 @@ class VideoCompressorService : Service() {
                 updateNotification(0, "Error: ${e.localizedMessage}")
             } finally {
                 CompressorState.isCompressing.value = false
+
+                // Lepaskan kunci Wakelock kalau udah selesai biar baterai normal lagi
+                if (wakeLock.isHeld) wakeLock.release()
+
                 stopForeground(STOP_FOREGROUND_DETACH)
                 stopSelf()
             }
@@ -102,7 +121,7 @@ class VideoCompressorService : Service() {
 
     private fun buildNotification(progress: Int, text: String): android.app.Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Komvid sedang bekerja")
+            .setContentTitle("nade komvid")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setProgress(100, progress, progress == 0)

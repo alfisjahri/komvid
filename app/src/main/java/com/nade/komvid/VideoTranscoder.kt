@@ -23,13 +23,14 @@ import kotlin.coroutines.resume
 
 class VideoTranscoder(private val context: Context) {
 
+    // Return diubah menjadi Pair (Uri?, UkuranFile)
     suspend fun startTranscode(
         videoUri: Uri,
         mimeType: String,
         targetBitrateBps: Int,
         targetHeightAbs: Int,
         onProgress: (Int, String) -> Unit
-    ): Boolean = withContext(Dispatchers.Main) {
+    ): Pair<Uri?, Long> = withContext(Dispatchers.Main) {
 
         suspendCancellableCoroutine { continuation ->
             val tempFile = File(context.cacheDir, "temp_komvid_${System.currentTimeMillis()}.mp4")
@@ -44,28 +45,29 @@ class VideoTranscoder(private val context: Context) {
 
             var progressJob: Job? = null
 
-            // Transformer murni tanpa TransformationRequest
             val transformer = Transformer.Builder(context)
                 .setVideoMimeType(mimeType)
                 .setEncoderFactory(encoderFactory)
                 .addListener(object : Transformer.Listener {
                     override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                         progressJob?.cancel()
-                        val success = saveToPublicGallery(tempFile, "Komvid_${System.currentTimeMillis()}.mp4")
+                        // Tangkap ukuran sebelum dihapus
+                        val finalSize = tempFile.length()
+                        val savedUri = saveToPublicGallery(tempFile, "Komvid_${System.currentTimeMillis()}.mp4")
                         tempFile.delete()
-                        if (continuation.isActive) continuation.resume(success)
+
+                        if (continuation.isActive) continuation.resume(Pair(savedUri, finalSize))
                     }
 
                     override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                         progressJob?.cancel()
                         tempFile.delete()
                         exportException.printStackTrace()
-                        if (continuation.isActive) continuation.resume(false)
+                        if (continuation.isActive) continuation.resume(Pair(null, 0L))
                     }
                 })
                 .build()
 
-            // SISTEM BARU: Menggunakan Effects dan EditedMediaItem untuk Downscale
             val mediaItem = MediaItem.fromUri(videoUri)
             val presentation = Presentation.createForHeight(targetHeightAbs)
             val effects = Effects(emptyList(), listOf(presentation))
@@ -73,7 +75,6 @@ class VideoTranscoder(private val context: Context) {
                 .setEffects(effects)
                 .build()
 
-            // Mulai eksekusi dengan item yang sudah diberi efek "Resize"
             transformer.start(editedMediaItem, tempFile.absolutePath)
 
             val startTime = System.currentTimeMillis()
@@ -108,7 +109,8 @@ class VideoTranscoder(private val context: Context) {
         }
     }
 
-    private fun saveToPublicGallery(tempFile: File, fileName: String): Boolean {
+    // Return diubah menjadi Uri? agar bisa dibuka dari UI
+    private fun saveToPublicGallery(tempFile: File, fileName: String): Uri? {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
@@ -123,7 +125,7 @@ class VideoTranscoder(private val context: Context) {
             }
         }
 
-        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
 
         return try {
             resolver.openOutputStream(uri).use { outStream ->
@@ -136,10 +138,10 @@ class VideoTranscoder(private val context: Context) {
                 values.put(MediaStore.Video.Media.IS_PENDING, 0)
                 resolver.update(uri, values, null, null)
             }
-            true
+            uri
         } catch (e: Exception) {
             e.printStackTrace()
-            false
+            null
         }
     }
 }
