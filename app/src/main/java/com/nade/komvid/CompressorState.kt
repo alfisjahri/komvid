@@ -8,7 +8,6 @@ object CompressorState {
     val progress = MutableStateFlow(0)
     val eta = MutableStateFlow("")
 
-    // Tambahan State untuk Halaman Statistik
     val isFinished = MutableStateFlow(false)
     val timeTaken = MutableStateFlow("")
     val originalSizeMb = MutableStateFlow(0.0)

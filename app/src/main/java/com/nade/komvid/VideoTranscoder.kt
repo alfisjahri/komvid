@@ -23,12 +23,12 @@ import kotlin.coroutines.resume
 
 class VideoTranscoder(private val context: Context) {
 
-    // Return diubah menjadi Pair (Uri?, UkuranFile)
     suspend fun startTranscode(
         videoUri: Uri,
         mimeType: String,
         targetBitrateBps: Int,
         targetHeightAbs: Int,
+        muteAudio: Boolean = false,
         onProgress: (Int, String) -> Unit
     ): Pair<Uri?, Long> = withContext(Dispatchers.Main) {
 
@@ -51,7 +51,6 @@ class VideoTranscoder(private val context: Context) {
                 .addListener(object : Transformer.Listener {
                     override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                         progressJob?.cancel()
-                        // Tangkap ukuran sebelum dihapus
                         val finalSize = tempFile.length()
                         val savedUri = saveToPublicGallery(tempFile, "Komvid_${System.currentTimeMillis()}.mp4")
                         tempFile.delete()
@@ -73,6 +72,7 @@ class VideoTranscoder(private val context: Context) {
             val effects = Effects(emptyList(), listOf(presentation))
             val editedMediaItem = EditedMediaItem.Builder(mediaItem)
                 .setEffects(effects)
+                .setRemoveAudio(muteAudio)
                 .build()
 
             transformer.start(editedMediaItem, tempFile.absolutePath)
@@ -91,13 +91,13 @@ class VideoTranscoder(private val context: Context) {
                             val remainSec = totalEstSec - elapsedSec
                             val mins = remainSec / 60
                             val secs = remainSec % 60
-                            val etaStr = String.format("Estimasi: %02d:%02d", mins, secs)
+                            val etaStr = String.format("Estimasi sisa: %02d:%02d", mins, secs)
                             onProgress(p, etaStr)
                         } else {
                             onProgress(0, "Menghitung estimasi...")
                         }
                     }
-                    delay(1000)
+                    delay(800)
                 }
             }
 
@@ -109,7 +109,6 @@ class VideoTranscoder(private val context: Context) {
         }
     }
 
-    // Return diubah menjadi Uri? agar bisa dibuka dari UI
     private fun saveToPublicGallery(tempFile: File, fileName: String): Uri? {
         val resolver = context.contentResolver
         val values = ContentValues().apply {

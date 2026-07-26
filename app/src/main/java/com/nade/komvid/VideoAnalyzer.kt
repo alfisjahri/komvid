@@ -14,18 +14,33 @@ data class VideoMetadata(
     val durationSec: Long,
     val bitRateBps: Long,
     val sizeBytes: Long
-)
+) {
+    fun formattedDuration(): String {
+        val mins = durationSec / 60
+        val secs = durationSec % 60
+        return if (mins > 0) String.format("%dm %02ds", mins, secs) else String.format("%ds", secs)
+    }
+
+    fun formattedSize(): String {
+        val mb = sizeBytes.toDouble() / (1024 * 1024)
+        return if (mb >= 1024) String.format("%.2f GB", mb / 1024) else String.format("%.1f MB", mb)
+    }
+}
 
 data class CompressionEstimate(
     val targetCodec: String,
     val targetBitrateMbps: Double,
     val estimatedSizeBytes: Long,
     val compressionPercentage: Int
-)
+) {
+    fun formattedEstimatedSize(): String {
+        val mb = estimatedSizeBytes.toDouble() / (1024 * 1024)
+        return if (mb >= 1024) String.format("%.2f GB", mb / 1024) else String.format("%.1f MB", mb)
+    }
+}
 
 class VideoAnalyzer(private val context: Context) {
 
-    // Ditambah suspend & Dispatchers.IO biar UI nggak freeze/delay
     suspend fun extractVideoMetadata(videoUri: Uri): VideoMetadata? = withContext(Dispatchers.IO) {
         val retriever = MediaMetadataRetriever()
         var sizeBytes: Long = 0
@@ -41,7 +56,6 @@ class VideoAnalyzer(private val context: Context) {
             val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
             val r = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toInt() ?: 0
 
-            // FIX PORTRAIT: Jika HP nge-rotate video, kita tukar panjang x lebarnya
             val trueWidth = if (r == 90 || r == 270) h else w
             val trueHeight = if (r == 90 || r == 270) w else h
 
@@ -81,7 +95,7 @@ class VideoAnalyzer(private val context: Context) {
         return "video/avc"
     }
 
-    fun calculateEstimation(metadata: VideoMetadata, targetShortSide: Int): CompressionEstimate {
+    fun calculateEstimation(metadata: VideoMetadata, targetShortSide: Int, muteAudio: Boolean = false): CompressionEstimate {
         val codec = checkHardwareCodecSupport()
         val targetVideoBitrateMbps = when {
             targetShortSide >= 2160 -> 12.0
@@ -89,7 +103,7 @@ class VideoAnalyzer(private val context: Context) {
             targetShortSide >= 1080 -> 3.5
             else -> 1.5
         }
-        val targetAudioBitrateMbps = 0.096
+        val targetAudioBitrateMbps = if (muteAudio) 0.0 else 0.096
         val totalBitrateMbps = targetVideoBitrateMbps + targetAudioBitrateMbps
         val estimatedSizeMb = (totalBitrateMbps * metadata.durationSec) / 8
         val estimatedSizeBytes = (estimatedSizeMb * 1024 * 1024).toLong()

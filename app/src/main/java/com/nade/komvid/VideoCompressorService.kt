@@ -2,6 +2,7 @@ package com.nade.komvid
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -15,9 +16,14 @@ import kotlinx.coroutines.*
 
 class VideoCompressorService : Service() {
 
-    private val CHANNEL_ID = "KomvidChannel"
-    private val NOTIF_ID = 1
+    companion object {
+        const val ACTION_CANCEL = "com.nade.komvid.ACTION_CANCEL"
+        const val CHANNEL_ID = "KomvidChannel"
+        const val NOTIF_ID = 1
+    }
+
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
+    private var transcodeJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -25,8 +31,14 @@ class VideoCompressorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CANCEL) {
+            cancelCompression()
+            return START_NOT_STICKY
+        }
+
         val videoUriStr = intent?.getStringExtra("VIDEO_URI") ?: return START_NOT_STICKY
         val targetShortSide = intent.getIntExtra("TARGET_RES", 720)
+        val muteAudio = intent.getBooleanExtra("MUTE_AUDIO", false)
 
         val notification = buildNotification(0, "Mempersiapkan mesin kompresi...")
         if (Build.VERSION.SDK_INT >= 34) {
@@ -35,12 +47,11 @@ class VideoCompressorService : Service() {
             startForeground(NOTIF_ID, notification)
         }
 
-        // KUNCI ANTI GAGAL: Memaksa CPU melek selama proses kompresi di Background
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Komvid::CompressWakelock")
-        wakeLock.acquire(30 * 60 * 1000L) // Maksimal melek 30 menit
+        wakeLock.acquire(30 * 60 * 1000L)
 
-        serviceScope.launch {
+        transcodeJob = serviceScope.launch {
             try {
                 CompressorState.reset()
                 CompressorState.isCompressing.value = true
@@ -52,7 +63,7 @@ class VideoCompressorService : Service() {
 
                 val metadata = analyzer.extractVideoMetadata(uri)
                 if (metadata != null) {
-                    val estimate = analyzer.calculateEstimation(metadata, targetShortSide)
+                    val estimate = analyzer.calculateEstimation(metadata, targetShortSide, muteAudio)
                     val mimeType = analyzer.checkHardwareCodecSupport()
                     val targetBitrateBps = (estimate.targetBitrateMbps * 1024 * 1024).toInt()
 
@@ -66,7 +77,7 @@ class VideoCompressorService : Service() {
 
                     val startTimeMs = System.currentTimeMillis()
 
-                    val (savedUri, finalSizeBytes) = transcoder.startTranscode(uri, mimeType, targetBitrateBps, targetHeightAbs) { progress, etaString ->
+                    val (savedUri, finalSizeBytes) = transcoder.startTranscode(uri, mimeType, targetBitrateBps, targetHeightAbs, muteAudio) { progress, etaString ->
                         updateNotification(progress, "Kompresi $progress% | $etaString")
                         CompressorState.progress.value = progress
                         CompressorState.eta.value = etaString
@@ -85,23 +96,29 @@ class VideoCompressorService : Service() {
                         CompressorState.isFinished.value = true
                         updateNotification(100, "Selesai! Video tersimpan di Galeri.")
                     } else {
-                        updateNotification(0, "Gagal mengompresi struktur video.")
+                        updateNotification(0, "Gagal mengompresi video.")
                     }
                 }
+            } catch (e: CancellationException) {
+                updateNotification(0, "Kompresi dibatalkan.")
             } catch (e: Exception) {
                 updateNotification(0, "Error: ${e.localizedMessage}")
             } finally {
                 CompressorState.isCompressing.value = false
-
-                // Lepaskan kunci Wakelock kalau udah selesai biar baterai normal lagi
                 if (wakeLock.isHeld) wakeLock.release()
-
                 stopForeground(STOP_FOREGROUND_DETACH)
                 stopSelf()
             }
         }
 
         return START_NOT_STICKY
+    }
+
+    private fun cancelCompression() {
+        transcodeJob?.cancel()
+        CompressorState.reset()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
@@ -120,12 +137,21 @@ class VideoCompressorService : Service() {
     }
 
     private fun buildNotification(progress: Int, text: String): android.app.Notification {
+        val cancelIntent = Intent(this, VideoCompressorService::class.java).apply {
+            action = ACTION_CANCEL
+        }
+        val cancelPendingIntent = PendingIntent.getService(
+            this, 0, cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("nade komvid")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setProgress(100, progress, progress == 0)
             .setOngoing(progress < 100)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Batal", cancelPendingIntent)
             .build()
     }
 
