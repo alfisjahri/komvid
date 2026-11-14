@@ -5,6 +5,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import androidx.media3.common.MediaItem
 import androidx.media3.effect.Presentation
@@ -17,9 +19,21 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 import kotlin.coroutines.resume
+
+sealed interface TranscodeResult {
+    data class Success(val savedUri: Uri, val finalSizeBytes: Long) : TranscodeResult
+    data class Failure(val errorMessage: String) : TranscodeResult
+}
 
 class VideoTranscoder(private val context: Context) {
 
@@ -29,8 +43,10 @@ class VideoTranscoder(private val context: Context) {
         targetBitrateBps: Int,
         targetHeightAbs: Int,
         muteAudio: Boolean = false,
+        trimStartMs: Long = -1L,
+        trimEndMs: Long = -1L,
         onProgress: (Int, String) -> Unit
-    ): Pair<Uri?, Long> = withContext(Dispatchers.Main) {
+    ): TranscodeResult = withContext(Dispatchers.Main) {
 
         suspendCancellableCoroutine { continuation ->
             val tempFile = File(context.cacheDir, "temp_komvid_${System.currentTimeMillis()}.mp4")
@@ -55,19 +71,48 @@ class VideoTranscoder(private val context: Context) {
                         val savedUri = saveToPublicGallery(tempFile, "Komvid_${System.currentTimeMillis()}.mp4")
                         tempFile.delete()
 
-                        if (continuation.isActive) continuation.resume(Pair(savedUri, finalSize))
+                        if (continuation.isActive) {
+                            if (savedUri != null) {
+                                continuation.resume(TranscodeResult.Success(savedUri, finalSize))
+                            } else {
+                                continuation.resume(
+                                    TranscodeResult.Failure(
+                                        "MediaStoreError: Gagal menyimpan hasil kompresi ke folder Movies/Komvid. Pastikan ruang penyimpanan internal mencukupi."
+                                    )
+                                )
+                            }
+                        }
                     }
 
-                    override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+                    override fun onError(
+                        composition: Composition,
+                        exportResult: ExportResult,
+                        exportException: ExportException
+                    ) {
                         progressJob?.cancel()
                         tempFile.delete()
                         exportException.printStackTrace()
-                        if (continuation.isActive) continuation.resume(Pair(null, 0L))
+                        val causeMsg = exportException.cause?.localizedMessage
+                            ?: exportException.localizedMessage
+                            ?: "Hardware encoder gagal memproses video."
+                        val errorText = "ExportException (${exportException.errorCode}): ${exportException.getErrorCodeName()} — $causeMsg"
+                        if (continuation.isActive) {
+                            continuation.resume(TranscodeResult.Failure(errorText))
+                        }
                     }
                 })
                 .build()
 
-            val mediaItem = MediaItem.fromUri(videoUri)
+            val mediaItemBuilder = MediaItem.Builder().setUri(videoUri)
+            if (trimStartMs >= 0L && trimEndMs > trimStartMs) {
+                val clippingConfig = MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(trimStartMs)
+                    .setEndPositionMs(trimEndMs)
+                    .build()
+                mediaItemBuilder.setClippingConfiguration(clippingConfig)
+            }
+            val mediaItem = mediaItemBuilder.build()
+
             val presentation = Presentation.createForHeight(targetHeightAbs)
             val effects = Effects(emptyList(), listOf(presentation))
             val editedMediaItem = EditedMediaItem.Builder(mediaItem)
@@ -84,17 +129,17 @@ class VideoTranscoder(private val context: Context) {
                 while (isActive) {
                     val progressState = transformer.getProgress(progressHolder)
                     if (progressState == Transformer.PROGRESS_STATE_AVAILABLE) {
-                        val p = progressHolder.progress
+                        val p = progressHolder.progress.coerceIn(0, 100)
                         if (p > 0) {
-                            val elapsedSec = (System.currentTimeMillis() - startTime) / 1000
-                            val totalEstSec = (elapsedSec * 100) / p
-                            val remainSec = totalEstSec - elapsedSec
-                            val mins = remainSec / 60
-                            val secs = remainSec % 60
-                            val etaStr = String.format("Estimasi sisa: %02d:%02d", mins, secs)
+                            val elapsedSec = (System.currentTimeMillis() - startTime) / 1000L
+                            val totalEstSec = (elapsedSec * 100L) / p
+                            val remainSec = (totalEstSec - elapsedSec).coerceAtLeast(0L)
+                            val mins = remainSec / 60L
+                            val secs = remainSec % 60L
+                            val etaStr = String.format(Locale.US, "%02d:%02d", mins, secs)
                             onProgress(p, etaStr)
                         } else {
-                            onProgress(0, "Menghitung estimasi...")
+                            onProgress(0, "--:--")
                         }
                     }
                     delay(800)
@@ -102,9 +147,17 @@ class VideoTranscoder(private val context: Context) {
             }
 
             continuation.invokeOnCancellation {
-                transformer.cancel()
                 progressJob?.cancel()
-                tempFile.delete()
+                val cancelAction = {
+                    runCatching { transformer.cancel() }
+                    tempFile.delete()
+                    Unit
+                }
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    cancelAction()
+                } else {
+                    Handler(Looper.getMainLooper()).post { cancelAction() }
+                }
             }
         }
     }
@@ -128,8 +181,9 @@ class VideoTranscoder(private val context: Context) {
 
         return try {
             resolver.openOutputStream(uri).use { outStream ->
+                if (outStream == null) throw IllegalStateException("Output stream null")
                 tempFile.inputStream().use { inStream ->
-                    inStream.copyTo(outStream!!)
+                    inStream.copyTo(outStream)
                 }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -140,6 +194,7 @@ class VideoTranscoder(private val context: Context) {
             uri
         } catch (e: Exception) {
             e.printStackTrace()
+            runCatching { resolver.delete(uri, null, null) }
             null
         }
     }
