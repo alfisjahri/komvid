@@ -2,25 +2,29 @@
 
 ![Android](https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square&logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Language-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white)
-![Version](https://img.shields.io/badge/Version-1.1-blue?style=flat-square)
+![Version](https://img.shields.io/badge/Version-0.1.1-blue?style=flat-square)
 ![Status](https://img.shields.io/badge/Status-Stable-success?style=flat-square)
 
 **Komvid** adalah aplikasi kompresi video Android super efisien yang dirancang khusus untuk memaksimalkan **Hardware Encoder (SoC/GPU)** bawaan HP. Menggunakan **Google Media3 Transformer**, Komvid menghasilkan kompresi video ultra cepat, hemat baterai, dan beroperasi penuh di latar belakang secara aman.
 
 ---
 
-## 🔥 Fitur Unggulan v1.1
+## 🔥 Fitur Unggulan v0.1.1
 
+* ✂️ **Trimming (Baru):** Potong durasi video sebelum dikompres dengan range slider — atur titik awal dan akhir, estimasi ukuran mengikuti durasi hasil trim.
+* 🎞️ **Codec Selector H.264 / H.265 (Baru):** Pilih codec encoder hardware. Opsi yang tidak didukung SoC HP otomatis di-disable dengan keterangan.
+* 📐 **Estimasi Ukuran Terkalibrasi (Baru):** Estimasi hasil kompresi akurat (target error <5%) untuk kedua codec, memperhitungkan durasi trim dan resolusi target.
+* 🎨 **Neobrutalism UI (Baru):** Desain ulang total — latar krem hangat, border tebal, hard shadow, sudut rounded 8–12dp. Jauh dari tampilan gelap v1.1.
 * ⚡ **100% Hardware Accelerated:** Menggunakan chip akselerasi hardware HP. Perangkat tetap dingin dan baterai hemat.
-* 🔇 **Mute Audio Option (Baru):** Pilihan untuk membisukan/menghapus track suara video agar ukuran file menyusut lebih drastis.
-* ✖ **Batal Kompresi Kapan Saja (Baru):** Kendali penuh untuk membatalkan proses kompresi secara instan melalui aplikasi atau laci Notifikasi.
-* ℹ️ **Detail Metadata Video (Baru):** Menampilkan resolusi asli, durasi terformat, ukuran file, dan estimasi hasil kompresi secara presisi.
+* 🔇 **Mute Audio Option:** Pilihan untuk membisukan/menghapus track suara video agar ukuran file menyusut lebih drastis.
+* ✖ **Batal Kompresi Kapan Saja:** Kendali penuh untuk membatalkan proses kompresi secara instan melalui aplikasi atau laci Notifikasi.
+* ℹ️ **Detail Metadata Video:** Menampilkan resolusi asli, durasi terformat, ukuran file, dan estimasi hasil kompresi.
+* ⚠️ **Layar Error (Baru):** Kegagalan encoding kini tampil di layar dengan detail error dan saran perbaikan, bukan lagi diam-diam kembali ke awal.
 * 📉 **Smart Downscaling & Bitrate Control:** Penyesuaian otomatis resolusi (4K ➔ 2K ➔ 1080p ➔ 720p) tanpa membuat video kabur.
 * 🛡️ **True Background Service & Wakelock:** Aman ditinggal multitasking (buka TikTok, IG, dll) karena berjalan di *Foreground Service* dengan proteksi *Wakelock*.
 * ⏳ **Real-Time ETA & Progress:** Estimasi waktu tersisa dan persentase progress terpusat dengan indikator visual modern.
 * 📁 **Direct MediaStore Export:** Otomatis menyimpan hasil kompresi di folder `Movies/Komvid` dan langsung muncul di Galeri HP.
-* 🎨 **Modern Material 3 Dark UI:** Desain antarmuka gelap modern (*Emerald & Cyan Theme*) dengan tata letak presisi di semua rasio layar.
-* 📦 **Super Lightweight APK:** Ukuran APK Release hanya **~1.4 MB** berkat optimasi R8 Code & Resource Shrinking.
+* 📦 **Super Lightweight APK:** Ukuran APK Release hanya **~1,5 MB** berkat optimasi R8 Code & Resource Shrinking.
 
 ---
 
@@ -30,7 +34,7 @@
 * **Minimum SDK:** API 24 (Android 7.0)
 * **Target SDK:** API 37
 * **UI Framework:** Jetpack Compose (Material Design 3)
-* **Video Engine:** AndroidX Media3 Transformer & Effect
+* **Video Engine:** AndroidX Media3 Transformer & Effect (ClippingConfiguration untuk trimming)
 * **Concurrency:** Kotlin Coroutines & StateFlow
 * **Background Task:** Android Foreground Services
 * **Storage:** MediaStore API (Scoped Storage Compatible)
@@ -53,3 +57,9 @@
    ./gradlew assembleRelease
    ```
 4. File APK dapat ditemukan di `app/build/outputs/apk/release/app-release.apk`.
+
+---
+
+## 📥 Download
+
+APK release tersedia di [GitHub Releases](https://github.com/alfisjahri/komvid/releases).
