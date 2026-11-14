@@ -7,6 +7,10 @@
 
 **Komvid** adalah aplikasi kompresi video Android super efisien yang dirancang khusus untuk memaksimalkan **Hardware Encoder (SoC/GPU)** bawaan HP. Menggunakan **Google Media3 Transformer**, Komvid menghasilkan kompresi video ultra cepat, hemat baterai, dan beroperasi penuh di latar belakang secara aman.
 
+<p align="center">
+  <img src="screenshots/283925_5_6ftk.jpg" alt="Komvid v0.1.1 — Neobrutalism UI dengan codec selector" width="320">
+</p>
+
 ---
 
 ## 🔥 Fitur Unggulan v0.1.1
